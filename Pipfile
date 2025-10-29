@@ -4,9 +4,11 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-django = "*"
 psycopg2-binary = "*"
+django = "*"
 djangorestframework = "*"
+djangorestframework-simplejwt = "*"
+python-decouple = "*"
 
 [dev-packages]
 

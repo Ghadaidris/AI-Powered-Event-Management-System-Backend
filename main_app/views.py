@@ -17,6 +17,7 @@ from .serializers import (
 
 
 # 1. Sign Up
+
 class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -26,7 +27,13 @@ class CreateUserView(generics.CreateAPIView):
             serializer = self.serializer_class(data=request.data)
             serializer.is_valid(raise_exception=True)
             user = serializer.save()
-            UserProfile.objects.create(user=user, role='staff')
+
+            # أنشئ UserProfile تلقائيًا (role = staff)
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={'role': 'staff', 'is_available': True}
+            )
+
             refresh = RefreshToken.for_user(user)
             data = {
                 'refresh': str(refresh),
@@ -52,11 +59,12 @@ class LoginView(APIView):
             if not user:
                 return Response({"error": "Invalid Credentials"}, status=401)
 
+            # تحقق من وجود UserProfile (لأنه يُنشأ في Sign Up)
             try:
                 profile = UserProfile.objects.get(user=user)
                 role = profile.role
             except UserProfile.DoesNotExist:
-                return Response({"error": "User profile not found."}, status=400)
+                return Response({"error": "User profile not found. Please sign up first."}, status=400)
 
             tokens = RefreshToken.for_user(user)
             return Response({
@@ -148,8 +156,4 @@ def get_me(request):
             'role': profile.role
         })
     except UserProfile.DoesNotExist:
-        return Response({
-            'username': request.user.username,
-            'email': request.user.email,
-            'role': 'staff'
-        })
+        return Response({"error": "User profile not found."}, status=400)

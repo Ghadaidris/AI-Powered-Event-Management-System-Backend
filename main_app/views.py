@@ -1,16 +1,22 @@
-
+# backend/main_app/views.py
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from .models import UserProfile, Company, Event
-from .serializers import UserSerializer, UserProfileSerializer, CompanySerializer, EventSerializer
+from .serializers import (
+    UserSerializer,
+    UserProfileSerializer,
+    CompanySerializer,
+    EventSerializer
+)
 
 
-#Sign Up (للـ Staff فقط - سيُستخدم)
+# 1. Sign Up
 class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -20,21 +26,20 @@ class CreateUserView(generics.CreateAPIView):
             serializer = self.serializer_class(data=request.data)
             serializer.is_valid(raise_exception=True)
             user = serializer.save()
-            
-            # أنشئ UserProfile تلقائيًا (role = staff)
             UserProfile.objects.create(user=user, role='staff')
-            
             refresh = RefreshToken.for_user(user)
             data = {
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
-                'user': UserSerializer(user).data
+                'user': UserSerializer(user).data,
+                'role': 'staff'
             }
             return Response(data, status=status.HTTP_201_CREATED)
         except Exception as err:
             return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# 2. Login
 class LoginView(APIView):
     def post(self, request):
         try:
@@ -55,18 +60,19 @@ class LoginView(APIView):
 
             tokens = RefreshToken.for_user(user)
             return Response({
-                "refresh": str(tokens),  
+                "refresh": str(tokens),
                 "access": str(tokens.access_token),
                 "user": UserSerializer(user).data,
                 "role": role
             }, status=200)
         except Exception as err:
             return Response({'error': str(err)}, status=500)
-        
-# 3. Verify Token ( - للـ Frontend)
+
+
+# 3. Verify Token
 class VerifyUserView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         try:
             user = request.user
@@ -85,6 +91,7 @@ class VerifyUserView(APIView):
 # 4. Profile List
 class ProfileList(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         profiles = UserProfile.objects.all()
         serializer = UserProfileSerializer(profiles, many=True)
@@ -92,14 +99,14 @@ class ProfileList(APIView):
 
 
 # 5. Company CRUD
-class CompanyListCreate(APIView):  
+class CompanyListCreate(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         companies = Company.objects.all()
         serializer = CompanySerializer(companies, many=True)
         return Response(serializer.data)
-    
+
     def post(self, request):
         serializer = CompanySerializer(data=request.data)
         if serializer.is_valid():
@@ -107,7 +114,6 @@ class CompanyListCreate(APIView):
                 profile = UserProfile.objects.get(user=request.user)
             except UserProfile.DoesNotExist:
                 return Response({'error': 'User profile not found'}, status=400)
-            
             company = serializer.save(created_by=profile)
             return Response(CompanySerializer(company).data, status=201)
         return Response(serializer.errors, status=400)
@@ -116,15 +122,34 @@ class CompanyListCreate(APIView):
 # 6. Event CRUD
 class EventListCreate(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def get(self, request):
         events = Event.objects.all()
         serializer = EventSerializer(events, many=True)
         return Response(serializer.data)
-    
+
     def post(self, request):
         serializer = EventSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
+
+
+# --- /profiles/me/ ---
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_me(request):
+    try:
+        profile = UserProfile.objects.get(user=request.user)
+        return Response({
+            'username': request.user.username,
+            'email': request.user.email,
+            'role': profile.role
+        })
+    except UserProfile.DoesNotExist:
+        return Response({
+            'username': request.user.username,
+            'email': request.user.email,
+            'role': 'staff'
+        })

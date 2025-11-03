@@ -26,8 +26,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ['username', 'email', 'role', 'is_available', 'current_team']
-
+        fields = ['id', 'username', 'email', 'role', 'is_available', 'current_team']  
 
 class CompanySerializer(serializers.ModelSerializer):
     created_by = UserProfileSerializer(read_only=True)

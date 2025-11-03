@@ -148,12 +148,28 @@ class EventListCreate(APIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_me(request):
-    try:
-        profile = UserProfile.objects.get(user=request.user)
-        return Response({
-            'username': request.user.username,
-            'email': request.user.email,
-            'role': profile.role
-        })
-    except UserProfile.DoesNotExist:
-        return Response({"error": "User profile not found."}, status=400)
+    profile = UserProfile.objects.get(user=request.user)
+    return Response({
+        'id': profile.id,
+        'username': request.user.username,
+        'email': request.user.email,
+        'role': profile.role
+    })
+ 
+
+
+class ProfileDetail(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def patch(self, request, pk):
+        try:
+            profile = UserProfile.objects.get(id=pk)  
+        except UserProfile.DoesNotExist:
+            return Response({"error": "Profile not found"}, status=404)
+        
+        if request.user.profile.role != 'admin':
+            return Response({"error": "Admin only"}, status=403)
+        
+        profile.role = request.data.get('role', profile.role)
+        profile.save()
+        return Response(UserProfileSerializer(profile).data)

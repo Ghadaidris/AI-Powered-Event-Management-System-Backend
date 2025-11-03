@@ -11,4 +11,5 @@ urlpatterns = [
     path('companies/', views.CompanyListCreate.as_view()),
     path('events/', views.EventListCreate.as_view()),
     path('profiles/me/', views.get_me, name='get_me'),
+    path('profiles/<int:pk>/', views.ProfileDetail.as_view()),
 ]

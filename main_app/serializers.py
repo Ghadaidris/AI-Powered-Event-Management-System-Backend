@@ -123,16 +123,10 @@ class MissionSerializer(serializers.ModelSerializer):
     event_title = serializers.CharField(source='event.title', read_only=True)
     team_name = serializers.CharField(source='team.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.user.username', read_only=True)
-    subtasks = TaskSerializer(many=True, read_only=True)  # ✅ عرض المهام التابعة للميشن
+    subtasks = TaskSerializer(many=True, read_only=True)
 
     class Meta:
         model = Mission
-        fields = [
-            'id', 'title', 'description',
-            'event', 'event_title',
-            'team', 'team_name',
-            'created_by', 'created_by_name',
-            'created_at', 'ai_generated', 'approved', 'status',
-            'subtasks'
-        ]
-        read_only_fields = ['created_by', 'created_at']
+        fields = ['id', 'title', 'description', 'event', 'team', 'created_by', 
+                  'ai_split', 'is_approved', 'event_title', 'team_name', 
+                  'created_by_name', 'subtasks']

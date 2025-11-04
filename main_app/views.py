@@ -1,4 +1,4 @@
-from rest_framework import generics, status, viewsets, permissions
+from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -7,21 +7,25 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
-import json  # مهم لتحويل members من string إلى list
-
+from django.conf import settings
 from .models import UserProfile, Company, Event, Team, Task, Mission
 from .serializers import (
-    UserSerializer,
-    UserProfileSerializer,
-    CompanySerializer,
-    EventSerializer,
-    TeamSerializer,
-    TaskSerializer,
-    MissionSerializer
+    UserSerializer, UserProfileSerializer, CompanySerializer,
+    EventSerializer, TeamSerializer, TaskSerializer, MissionSerializer
 )
+from google.generativeai import GenerativeModel
+import google.generativeai as genai
+from .ai_service import suggest_mission, split_mission  # Gemini AI
+import json
+import re
 
 
-# --- Auth ---
+
+
+
+# ===============================
+# Auth
+# ===============================
 class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -76,7 +80,9 @@ class VerifyUserView(APIView):
         })
 
 
-# --- Profiles ---
+# ===============================
+# Profiles
+# ===============================
 class ProfileList(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -114,7 +120,9 @@ class ProfileDetail(APIView):
         return Response(UserProfileSerializer(profile).data)
 
 
-# --- Company ---
+# ===============================
+# Company
+# ===============================
 class CompanyListCreate(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -156,7 +164,9 @@ class CompanyDetail(APIView):
         return Response({"message": "Company deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
 
-# --- Event ---
+# ===============================
+# Event
+# ===============================
 class EventListCreate(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -196,7 +206,9 @@ class EventDetail(APIView):
         return Response(status=204)
 
 
-# --- Team ---
+# ===============================
+# Team
+# ===============================
 class TeamListCreate(generics.ListCreateAPIView):
     queryset = Team.objects.all()
     serializer_class = TeamSerializer
@@ -206,12 +218,12 @@ class TeamListCreate(generics.ListCreateAPIView):
         profile = UserProfile.objects.get(user=request.user)
         if profile.role != 'organizer':
             return Response({'error': 'Only organizers can create teams'}, status=403)
-
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
 
 class TeamDetail(APIView):
     permission_classes = [IsAuthenticated]
@@ -235,7 +247,9 @@ class TeamDetail(APIView):
         return Response(status=204)
 
 
-# --- Task ---
+# ===============================
+# Task
+# ===============================
 class TaskListCreate(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -283,68 +297,9 @@ class TaskDetail(APIView):
         return Response(status=204)
 
 
-# --- AI Logic Placeholder ---
-class TaskSplitAI(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk):
-        profile = UserProfile.objects.get(user=request.user)
-        task = Task.objects.get(pk=pk)
-
-        if profile.role not in ['organizer', 'manager']:
-            return Response({'error': 'Unauthorized'}, status=403)
-
-        if profile.role == 'manager' and task.team.manager != profile:
-            return Response({'error': 'Not your team’s task'}, status=403)
-
-        members = task.team.members.all()
-        subtasks = []
-        for member in members:
-            sub = Task.objects.create(
-                title=f"Subtask for {member.user.username}",
-                description=f"Part of {task.title}",
-                assignee=member,
-                event=task.event,
-                team=task.team,
-                parent_task=task
-            )
-            subtasks.append(TaskSerializer(sub).data)
-
-        task.is_split = True
-        task.save()
-
-        return Response({
-            'message': 'Task successfully split into subtasks.',
-            'subtasks': subtasks
-        })
-
-
-class ManagerTeamList(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        profile = UserProfile.objects.get(user=request.user)
-        if profile.role != 'manager':
-            return Response({"error": "Not allowed"}, status=403)
-        teams = Team.objects.filter(manager=profile)
-        serializer = TeamSerializer(teams, many=True)
-        return Response(serializer.data)
-
-
-class ManagerTaskList(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        profile = UserProfile.objects.get(user=request.user)
-        if profile.role != 'manager':
-            return Response({"error": "Not allowed"}, status=403)
-        tasks = Task.objects.filter(
-            assignee=profile) | Task.objects.filter(team__manager=profile)
-        serializer = TaskSerializer(tasks, many=True)
-        return Response(serializer.data)
-
-
-# --- Mission ---
+# ===============================
+# Mission
+# ===============================
 class MissionListCreate(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -354,24 +309,23 @@ class MissionListCreate(APIView):
             missions = Mission.objects.all()
         elif profile.role == 'manager':
             missions = Mission.objects.filter(team__manager=profile)
-        else:
+        elif profile.role == 'staff':
             missions = Mission.objects.filter(team__members=profile)
+        else:
+            missions = Mission.objects.none()  # admin يشوف كله من Organizer
         return Response(MissionSerializer(missions, many=True).data)
 
     def post(self, request):
         profile = UserProfile.objects.get(user=request.user)
         if profile.role != 'organizer':
             return Response({'error': 'Only organizers can create missions'}, status=403)
-
         data = request.data.copy()
         data['created_by'] = profile.id
-
         serializer = MissionSerializer(data=data)
         serializer.is_valid(raise_exception=True)
         mission = serializer.save(created_by=profile)
         return Response(MissionSerializer(mission).data, status=201)
-
-
+    
 class MissionDetail(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -392,43 +346,124 @@ class MissionDetail(APIView):
         return Response(status=204)
 
 
-# --- AI Mission Assignment ---
-class MissionAssignAI(APIView):
+# ===============================
+# Add Member to Team
+# ===============================
+class AddTeamMember(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         profile = UserProfile.objects.get(user=request.user)
-        if profile.role != "manager":
-            return Response({"error": "Only managers can use AI assignment"}, status=403)
+        team = Team.objects.get(pk=pk)
+        if profile.role not in ['organizer', 'admin']:
+            return Response({'error': 'Not authorized'}, status=403)
+        member_id = request.data.get('member_id')
+        if not member_id:
+            return Response({'error': 'member_id is required'}, status=400)
+        try:
+            member_profile = UserProfile.objects.get(id=member_id)
+        except UserProfile.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+        team.members.add(member_profile)
+        team.save()
+        return Response({'message': f'{member_profile.user.username} added to {team.name}'})
+
+
+# ===============================
+# Gemini AI: Organizer Suggest Mission
+# ===============================
+# Configure Gemini
+genai.configure(api_key=settings.GEMINI_API_KEY)
+class AISuggestMission(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        event_id = request.data.get('event')
+        if not event_id:
+            return Response({'error': 'Event ID required'}, status=400)
 
         try:
-            mission = Mission.objects.get(pk=pk, team__manager=profile)
-        except Mission.DoesNotExist:
-            return Response({"error": "Mission not found or not your team’s mission"}, status=404)
+            event = Event.objects.get(id=event_id)
+        except Event.DoesNotExist:
+            return Response({'error': 'Event not found'}, status=404)
 
-        team_members = mission.team.members.all()
-        if not team_members.exists():
-            return Response({"error": "No members in the team"}, status=400)
+        prompt = f"""
+        Suggest ONE mission for this event in JSON only:
+        Title: {event.title}
+        Date: {event.date}
+        Location: {event.location}
 
-        subtasks = []
-        for i, member in enumerate(team_members, start=1):
-            sub = Task.objects.create(
-                title=f"Task {i} for {member.user.username}",
-                description=f"Auto-generated from mission '{mission.title}'",
-                assignee=member,
-                event=mission.event,
+        Return ONLY:
+        {{
+          "title": "short title",
+          "description": "1-2 sentence description"
+        }}
+        """
+
+        try:
+            model = GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+
+            # تنظيف النص: احذف كل شيء قبل أول { و بعد آخر }
+            start = text.find('{')
+            end = text.rfind('}') + 1
+            if start == -1 or end == 0:
+                return Response({'error': 'No JSON found in AI response'}, status=500)
+
+            json_str = text[start:end]
+            suggestion = json.loads(json_str)
+            return Response(suggestion)
+
+        except json.JSONDecodeError as e:
+            return Response({'error': f'Invalid JSON from AI: {str(e)}'}, status=500)
+        except Exception as e:
+            return Response({'error': f'Gemini failed: {str(e)}'}, status=500)
+# ===============================
+# Gemini AI: Manager Split Mission
+# ===============================
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def ai_split_mission_view(request, mission_id):
+    profile = UserProfile.objects.get(user=request.user)
+    try:
+        mission = Mission.objects.get(id=mission_id, team__manager=profile)
+    except Mission.DoesNotExist:
+        return Response({"error": "Mission not found or not your team"}, status=404)
+
+    team_members = mission.team.members.all()
+    if not team_members.exists():
+        return Response({"error": "No members in team"}, status=400)
+
+    subtasks = split_mission(
+        mission.title, mission.description or "", team_members)
+    created = []
+
+    for sub in subtasks:
+        try:
+            assignee = UserProfile.objects.get(user__username=sub['assignee'])
+            task = Task.objects.create(
+                title=sub['title'],
+                description=sub.get('description', ''),
+                mission=mission,
+                assignee=assignee,
                 team=mission.team,
-                parent_mission=mission
+                event=mission.event,
+                ai_generated=True
             )
-            subtasks.append(TaskSerializer(sub).data)
+            created.append(TaskSerializer(task).data)
+        except Exception as e:
+            continue
 
-        mission.is_distributed = True
-        mission.save()
+    mission.ai_split = True
+    mission.save()
 
-        return Response({
-            "message": "AI distributed tasks successfully",
-            "subtasks": subtasks
-        }, status=201)
+    return Response({
+        "subtasks": created,
+        "message": "AI split successful"
+    })
+
+# --- Manager Approve AI Split ---
 
 
 class ManagerApproveTasks(APIView):
@@ -444,7 +479,7 @@ class ManagerApproveTasks(APIView):
         except Mission.DoesNotExist:
             return Response({"error": "Mission not found or not your team’s mission"}, status=404)
 
-        tasks = Task.objects.filter(parent_mission=mission)
+        tasks = Task.objects.filter(mission=mission)
         updates = request.data.get("updates", [])
         for update in updates:
             try:
@@ -458,30 +493,8 @@ class ManagerApproveTasks(APIView):
         mission.is_approved = True
         mission.save()
 
-        return Response({"message": "Tasks updated and approved successfully."}, status=200)
-
-
-# --- Add Member to Team ---
-class AddTeamMember(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, pk):
-        profile = UserProfile.objects.get(user=request.user)
-        team = Team.objects.get(pk=pk)
-
-        if profile.role not in ['organizer', 'admin']:
-            return Response({'error': 'Not authorized'}, status=403)
-
-        member_id = request.data.get('member_id')
-        if not member_id:
-            return Response({'error': 'member_id is required'}, status=400)
-
-        try:
-            member_profile = UserProfile.objects.get(id=member_id)
-        except UserProfile.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
-
-        team.members.add(member_profile)
-        team.save()
-
-        return Response({'message': f'{member_profile.user.username} added to {team.name}'})
+        # رجّعي الـ subtasks بعد التعديل
+        return Response({
+            "message": "Tasks updated and approved successfully.",
+            "subtasks": TaskSerializer(tasks, many=True).data
+        }, status=200)

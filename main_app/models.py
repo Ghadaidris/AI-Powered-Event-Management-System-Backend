@@ -114,7 +114,6 @@ class Team(models.Model):
 # ===============================
 # 🔹 Mission (created by organizer)
 # ===============================
-
 class Mission(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
@@ -146,13 +145,15 @@ class Mission(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
-    ai_generated = models.BooleanField(default=False)
-    approved = models.BooleanField(default=False)
+
+   
+    ai_split = models.BooleanField(default=False)
+    is_approved = models.BooleanField(default=False)
+
     status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES, default='pending')
 
     def __str__(self):
         return f"Mission: {self.title} ({self.team.name} - {self.event.title})"
-
 
 
 # ===============================
@@ -164,15 +165,15 @@ class Task(models.Model):
 
     mission = models.ForeignKey(
         Mission,
-        on_delete=models.CASCADE,  # ✅ delete subtasks when mission deleted
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name="subtasks"
+        related_name="subtasks"  # ← هذا المهم!
     )
 
     assignee = models.ForeignKey(
         UserProfile,
-        on_delete=models.CASCADE,   # keep task but null assignee if user deleted
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="tasks"
@@ -180,7 +181,7 @@ class Task(models.Model):
 
     team = models.ForeignKey(
         Team,
-        on_delete=models.CASCADE,  # ✅ delete tasks when team deleted
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="tasks"
@@ -188,13 +189,13 @@ class Task(models.Model):
 
     event = models.ForeignKey(
         Event,
-        on_delete=models.CASCADE,  # ✅ delete tasks when event deleted
+        on_delete=models.CASCADE,
         related_name="tasks"
     )
 
     created_by = models.ForeignKey(
         UserProfile,
-        on_delete=models.CASCADE, 
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="created_tasks"
@@ -202,10 +203,7 @@ class Task(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=TASK_STATUS_CHOICES, default='pending')
-    approved = models.BooleanField(default=False)
     ai_generated = models.BooleanField(default=False)
-    assigned_by_ai = models.BooleanField(default=False)
-
 
     def __str__(self):
         base = f"{self.title}"

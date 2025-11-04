@@ -12,6 +12,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from dotenv import load_dotenv
 load_dotenv()
+import os
+
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 SECRET_KEY = os.environ.get("SECRET_KEY")
 from pathlib import Path
 
@@ -154,3 +158,7 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
+
+
+
+

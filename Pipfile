@@ -10,6 +10,9 @@ djangorestframework = "*"
 djangorestframework-simplejwt = "*"
 python-decouple = "*"
 django-cors-headers = "*"
+openai = "*"
+python-dotenv = "*"
+google-genai = "*"
 
 [dev-packages]
 

@@ -13,13 +13,12 @@ from .serializers import (
     UserSerializer, UserProfileSerializer, CompanySerializer,
     EventSerializer, TeamSerializer, TaskSerializer, MissionSerializer
 )
-from google.generativeai import GenerativeModel
-import google.generativeai as genai
+
 from .ai_service import suggest_mission, split_mission  # Gemini AI
 import json
 import re
-
-
+from google import genai
+client = genai.Client()
 
 
 
@@ -368,12 +367,9 @@ class AddTeamMember(APIView):
         team.save()
         return Response({'message': f'{member_profile.user.username} added to {team.name}'})
 
-
 # ===============================
-# Gemini AI: Organizer Suggest Mission
+# Gemini AI: Organizer Suggest Mission (معدل)
 # ===============================
-# Configure Gemini
-genai.configure(api_key=settings.GEMINI_API_KEY)
 class AISuggestMission(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -387,25 +383,42 @@ class AISuggestMission(APIView):
         except Event.DoesNotExist:
             return Response({'error': 'Event not found'}, status=404)
 
-        prompt = f"""
-        Suggest ONE mission for this event in JSON only:
-        Title: {event.title}
-        Date: {event.date}
-        Location: {event.location}
+        # جمع كل أعضاء الفرق المرتبطة بالحدث
+        team_members_usernames = []
+        event_teams = event.teams.all()
+        for team in event_teams:
+            team_members_usernames.extend([member.user.username for member in team.members.all()])
+        team_members_str = ', '.join(team_members_usernames) if team_members_usernames else 'No members'
 
-        Return ONLY:
+        # تحسين البرومت ليكون أكثر تحديداً
+        prompt = f"""
+        You are a professional AI event planner. Your task is to create ONE realistic and actionable mission
+        for this event, suitable to be assigned to the team manager. Consider the event details:
+
+        - Event Title: {event.title}
+        - Event Date: {event.date}
+        - Event Location: {event.location}
+        - Event Type: {event.event_type if hasattr(event, 'event_type') else 'General'}
+        - Expected Attendees: {event.expected_attendees if hasattr(event, 'expected_attendees') else 'Unknown'}
+        - Available Team Members: {team_members_str}
+
+        Requirements:
+        - Must be actionable and assignable to a manager.
+        - Include a clear title (short, descriptive).
+        - Include a description (1-2 sentences) explaining what needs to be done and why.
+        - Consider potential challenges.
+
+        Return ONLY a JSON in this exact format:
         {{
-          "title": "short title",
-          "description": "1-2 sentence description"
+          "title": "short descriptive title",
+          "description": "1-2 sentence explanation of the mission"
         }}
         """
 
         try:
-            model = GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
             text = response.text.strip()
 
-            # تنظيف النص: احذف كل شيء قبل أول { و بعد آخر }
             start = text.find('{')
             end = text.rfind('}') + 1
             if start == -1 or end == 0:
@@ -413,23 +426,51 @@ class AISuggestMission(APIView):
 
             json_str = text[start:end]
             suggestion = json.loads(json_str)
-            return Response(suggestion)
+
+            # اختيار أول فريق مرتبط بالحدث كـ default
+            team = event_teams.first()
+            if not team:
+                return Response({'error': 'No team found for this event'}, status=400)
+
+            manager = event.teams.first().manager 
+            if not manager:
+                return Response({'error': 'No manager assigned to the team'}, status=400)
+
+            mission = Mission.objects.create(
+                title=suggestion['title'],
+                description=suggestion['description'],
+                event=event,
+                team=team,
+                assigned_manager=manager,
+                created_by=UserProfile.objects.get(user=request.user)
+            )
+
+            return Response({
+                "mission": {
+                    "id": mission.id,
+                    "title": mission.title,
+                    "description": mission.description,
+                    "manager": manager.user.username
+                }
+            }, status=201)
 
         except json.JSONDecodeError as e:
             return Response({'error': f'Invalid JSON from AI: {str(e)}'}, status=500)
         except Exception as e:
             return Response({'error': f'Gemini failed: {str(e)}'}, status=500)
+
+
 # ===============================
-# Gemini AI: Manager Split Mission
+# Gemini AI: Manager Split Mission (معدل)
 # ===============================
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def ai_split_mission_view(request, mission_id):
     profile = UserProfile.objects.get(user=request.user)
     try:
-        mission = Mission.objects.get(id=mission_id, team__manager=profile)
+        mission = Mission.objects.get(id=mission_id, assigned_manager=profile)
     except Mission.DoesNotExist:
-        return Response({"error": "Mission not found or not your team"}, status=404)
+        return Response({"error": "Mission not found or not assigned to you"}, status=404)
 
     team_members = mission.team.members.all()
     if not team_members.exists():
@@ -449,10 +490,11 @@ def ai_split_mission_view(request, mission_id):
                 assignee=assignee,
                 team=mission.team,
                 event=mission.event,
-                ai_generated=True
+                ai_generated=True,
+                created_by=profile
             )
             created.append(TaskSerializer(task).data)
-        except Exception as e:
+        except Exception:
             continue
 
     mission.ai_split = True
@@ -463,9 +505,10 @@ def ai_split_mission_view(request, mission_id):
         "message": "AI split successful"
     })
 
-# --- Manager Approve AI Split ---
 
-
+# ===============================
+# Manager Approve AI Split 
+# ===============================
 class ManagerApproveTasks(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -475,9 +518,9 @@ class ManagerApproveTasks(APIView):
             return Response({"error": "Only managers can approve tasks"}, status=403)
 
         try:
-            mission = Mission.objects.get(pk=pk, team__manager=profile)
+            mission = Mission.objects.get(pk=pk, assigned_manager=profile)
         except Mission.DoesNotExist:
-            return Response({"error": "Mission not found or not your team’s mission"}, status=404)
+            return Response({"error": "Mission not found or not assigned to you"}, status=404)
 
         tasks = Task.objects.filter(mission=mission)
         updates = request.data.get("updates", [])
@@ -493,8 +536,29 @@ class ManagerApproveTasks(APIView):
         mission.is_approved = True
         mission.save()
 
-        # رجّعي الـ subtasks بعد التعديل
         return Response({
             "message": "Tasks updated and approved successfully.",
             "subtasks": TaskSerializer(tasks, many=True).data
         }, status=200)
+
+# ===============================
+# DELETE handlers using get_object_or_404
+# ===============================
+@api_view(['DELETE'])
+def delete_team(request, pk):
+    team = get_object_or_404(Team, pk=pk)
+    profile = UserProfile.objects.get(user=request.user)
+    if profile != team.created_by and profile.role != 'admin':
+        return Response({'error': 'Only organizer or admin can delete this team'}, status=403)
+    team.delete()
+    return Response({'message': 'Team deleted successfully'}, status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['DELETE'])
+def delete_mission(request, pk):
+    mission = get_object_or_404(Mission, pk=pk)
+    profile = UserProfile.objects.get(user=request.user)
+    if profile.role not in ['organizer', 'admin']:
+        return Response({'error': 'Only organizers or admins can delete missions'}, status=403)
+    mission.delete()
+    return Response({'message': 'Mission deleted successfully'}, status=status.HTTP_204_NO_CONTENT)

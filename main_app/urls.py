@@ -38,6 +38,9 @@ urlpatterns = [
     path('teams/<int:pk>/', views.TeamDetail.as_view(), name='team-detail'),
     path('teams/<int:pk>/add-member/', views.AddTeamMember.as_view(), name='add-team-member'),
 
+    # DELETE Team
+    path('teams/<int:pk>/delete/', views.delete_team, name='team-delete'),
+
     # ===============================
     # Tasks
     # ===============================
@@ -50,16 +53,18 @@ urlpatterns = [
     path('missions/', views.MissionListCreate.as_view(), name='mission-list'),
     path('missions/<int:pk>/', views.MissionDetail.as_view(), name='mission-detail'),
 
+    # DELETE Mission
+    path('missions/<int:pk>/delete/', views.delete_mission, name='mission-delete'),
+
     # ===============================
     # GEMINI AI ENDPOINTS
     # ===============================
-        # GEMINI AI ENDPOINTS
     # Organizer: AI Suggest Mission
-   path('ai/suggest-mission/', views.AISuggestMission.as_view(), name='ai-suggest-mission'),
+    path('ai/suggest-mission/', views.AISuggestMission.as_view(), name='ai-suggest-mission'),
 
     # Manager: AI Split Mission into Subtasks
     path('missions/<int:mission_id>/ai-split/', views.ai_split_mission_view, name='ai-split-mission'),
 
     # Manager: Approve AI-Split Mission
-   path('missions/<int:pk>/approve/', views.ManagerApproveTasks.as_view(), name='mission-approve'),
+    path('missions/<int:pk>/approve/', views.ManagerApproveTasks.as_view(), name='mission-approve'),
 ]

@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404
 from django.conf import settings
 from .models import UserProfile, Company, Event, Team, Task, Mission
 from .serializers import (
-    UserSerializer, UserProfileSerializer, CompanySerializer,
+    UserSerializer, UserProfileSerializer, CompanySerializer,   
     EventSerializer, TeamSerializer, TaskSerializer, MissionSerializer
 )
 
@@ -368,7 +368,7 @@ class AddTeamMember(APIView):
         return Response({'message': f'{member_profile.user.username} added to {team.name}'})
 
 # ===============================
-# Gemini AI: Organizer Suggest Mission (معدل)
+# Gemini AI: Organizer Suggest Mission 
 # ===============================
 class AISuggestMission(APIView):
     permission_classes = [IsAuthenticated]
@@ -459,14 +459,40 @@ class AISuggestMission(APIView):
         except Exception as e:
             return Response({'error': f'Gemini failed: {str(e)}'}, status=500)
 
+# ===============================
+# AI Service: Dynamic Split Mission
+# ===============================
+def split_mission(title, description, team_members):
+    """
+    Dynamically split a mission into subtasks and assign each to a team member.
+    team_members: QuerySet of UserProfile objects
+    """
+    subtasks = []
+    staff_members = [member for member in team_members if member.role == 'staff']
+    if not staff_members:
+        return subtasks
+
+    # Create 1 subtask per staff member
+    for i, member in enumerate(staff_members, start=1):
+        task_title = f"{title} - Subtask {i}"
+        task_description = f"Task for {member.user.username}: {description[:50]}..."  # Short preview
+        subtasks.append({
+            "title": task_title,
+            "description": task_description,
+            "assignee": member.user.username
+        })
+
+    return subtasks
+
 
 # ===============================
-# Gemini AI: Manager Split Mission (معدل)
+# AI Split Mission View (Dynamic)
 # ===============================
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def ai_split_mission_view(request, mission_id):
     profile = UserProfile.objects.get(user=request.user)
+
     try:
         mission = Mission.objects.get(id=mission_id, assigned_manager=profile)
     except Mission.DoesNotExist:
@@ -476,11 +502,11 @@ def ai_split_mission_view(request, mission_id):
     if not team_members.exists():
         return Response({"error": "No members in team"}, status=400)
 
-    subtasks = split_mission(
-        mission.title, mission.description or "", team_members)
-    created = []
+    # Generate dynamic subtasks
+    subtasks_data = split_mission(mission.title, mission.description or "", team_members)
+    created_tasks = []
 
-    for sub in subtasks:
+    for sub in subtasks_data:
         try:
             assignee = UserProfile.objects.get(user__username=sub['assignee'])
             task = Task.objects.create(
@@ -493,53 +519,71 @@ def ai_split_mission_view(request, mission_id):
                 ai_generated=True,
                 created_by=profile
             )
-            created.append(TaskSerializer(task).data)
-        except Exception:
-            continue
+            created_tasks.append(TaskSerializer(task).data)
+        except UserProfile.DoesNotExist:
+            continue  # Skip if user not found
 
     mission.ai_split = True
     mission.save()
 
     return Response({
-        "subtasks": created,
+        "subtasks": created_tasks,
         "message": "AI split successful"
     })
 
-
 # ===============================
-# Manager Approve AI Split 
+# Manager Approve & Edit AI Split Tasks
 # ===============================
 class ManagerApproveTasks(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
-        profile = UserProfile.objects.get(user=request.user)
-        if profile.role != "manager":
+        """
+        Manager can edit AI-generated tasks and approve them for staff.
+        Request data format:
+        {
+            "updates": [
+                {"id": 12, "title": "New Title", "description": "Updated description", "assignee": "username"}
+            ]
+        }
+        """
+        manager_profile = UserProfile.objects.get(user=request.user)
+        if manager_profile.role != "manager":
             return Response({"error": "Only managers can approve tasks"}, status=403)
 
         try:
-            mission = Mission.objects.get(pk=pk, assigned_manager=profile)
+            mission = Mission.objects.get(pk=pk, assigned_manager=manager_profile)
         except Mission.DoesNotExist:
             return Response({"error": "Mission not found or not assigned to you"}, status=404)
 
-        tasks = Task.objects.filter(mission=mission)
+        tasks = Task.objects.filter(mission=mission, ai_generated=True)
         updates = request.data.get("updates", [])
+
         for update in updates:
             try:
                 task = tasks.get(id=update["id"])
-                serializer = TaskSerializer(task, data=update, partial=True)
-                serializer.is_valid(raise_exception=True)
-                serializer.save()
+                # Update fields
+                if "title" in update:
+                    task.title = update["title"]
+                if "description" in update:
+                    task.description = update["description"]
+                if "assignee" in update:
+                    assignee = UserProfile.objects.filter(user__username=update["assignee"]).first()
+                    if assignee:
+                        task.assignee = assignee
+                task.save()
             except Task.DoesNotExist:
                 continue
 
-        mission.is_approved = True
+        mission.is_approved = True  # بعد الموافقة يروح للـ staff رسمي
         mission.save()
 
         return Response({
             "message": "Tasks updated and approved successfully.",
             "subtasks": TaskSerializer(tasks, many=True).data
         }, status=200)
+
+
 
 # ===============================
 # DELETE handlers using get_object_or_404
@@ -562,3 +606,25 @@ def delete_mission(request, pk):
         return Response({'error': 'Only organizers or admins can delete missions'}, status=403)
     mission.delete()
     return Response({'message': 'Mission deleted successfully'}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+class StaffUpdateTaskStatus(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        profile = UserProfile.objects.get(user=request.user)
+        
+        # السماح فقط للstaff اللي مخصص له المهمة
+        try:
+            task = Task.objects.get(pk=pk, assignee=profile)
+        except Task.DoesNotExist:
+            return Response({'error': 'Task not found or not assigned to you'}, status=404)
+
+        status_value = request.data.get('status')
+        if not status_value:
+            return Response({'error': 'status field is required'}, status=400)
+        
+        task.status = status_value
+        task.save()
+        return Response(TaskSerializer(task).data, status=200)

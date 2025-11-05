@@ -64,7 +64,7 @@ class EventSerializer(serializers.ModelSerializer):
 # ===============================
 # 🔹 Team
 # ===============================
-# serializers.py
+
 
 
 class TeamSerializer(serializers.ModelSerializer):
@@ -92,7 +92,6 @@ class TeamSerializer(serializers.ModelSerializer):
             team.members.set(members_data)
         return team
 
-
 # ===============================
 # 🔹 Task
 # ===============================
@@ -111,7 +110,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'team', 'team_name',
             'event', 'event_title',
             'created_by', 'created_at',
-            'status', 'approved', 'ai_generated'
+            'status',          
+            'ai_generated'    
         ]
         read_only_fields = ['created_by', 'created_at']
 

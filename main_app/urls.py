@@ -1,4 +1,4 @@
-# backend/main_app/urls.py
+
 from django.urls import path
 from . import views
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -67,4 +67,7 @@ urlpatterns = [
 
     # Manager: Approve AI-Split Mission
     path('missions/<int:pk>/approve/', views.ManagerApproveTasks.as_view(), name='mission-approve'),
+
+
+    path('tasks/<int:pk>/update-status/', views.StaffUpdateTaskStatus.as_view(), name='update-task-status'),
 ]

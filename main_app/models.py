@@ -68,7 +68,7 @@ class Event(models.Model):
 
     company = models.ForeignKey(
         Company,
-        on_delete=models.CASCADE,  # ✅ delete all events if company deleted
+        on_delete=models.CASCADE,  #  delete all events if company deleted
         null=True,
         blank=True
     )
@@ -95,7 +95,7 @@ class Team(models.Model):
     )
     event = models.ForeignKey(
         Event,
-        on_delete=models.CASCADE,  # ✅ delete teams when event deleted
+        on_delete=models.CASCADE,  #  delete teams when event deleted
         related_name="teams"
     )
     created_by = models.ForeignKey(
@@ -168,7 +168,7 @@ class Task(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        related_name="subtasks"  # ← هذا المهم!
+        related_name="subtasks" 
     )
 
     assignee = models.ForeignKey(
